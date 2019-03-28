@@ -18,6 +18,15 @@
 #  - Exception Column when Relative and Absolute are both broken
 #  - % of notional column
 
+# ## Please note
+
+# - removes the trades in Oberon that arent GBP,EUR,USD,CAD or AUD because the value in Oberon is wrong
+# - removes non shared trades
+# - duplicates in All trade are selected based on fund (if fund matches in Oberon)
+# - removes All trade file sedols with no valuation
+# - It uses the Valuation in oberon converted with exhcange rates in GBP, and uses All Trade CPTY MTM converted to GBP with excghange rates
+# - removes trades in Oberon or All Trade with valuation missing
+
 # ## Code
 
 # In[1]:
@@ -29,119 +38,254 @@ from datetime import datetime, timedelta
 import datetime as dt
 import os
 import re
+from QuantLib import *
 
 
 # In[2]:
-
-# retrieve today`s date to output the files with the correct name
-yesterday = dt.date.today() - timedelta(days=1)
-# the variable yesterday needs to be manually created if yesterday was a holiday example: yesterday=datetime.date(2019, 4, 13)
-
-
-# In[3]:
-
-# exclude weekends (holidays will have to be manually accounted for)
-if dt.date.weekday(yesterday) not in range (0,5):
-    yesterday=dt.date.today() - timedelta(days=3)
-
-
-# In[4]:
-
-# store the date into a string
-lastBusDay=yesterday.strftime("%d.%m.%Y")
-
-
-# In[5]:
 
 # inputs path
 path_inputs="//Inv/lgim/FO Operations/Derivative Trade Support/Pricing/Tolerance Breaks Outputs/Input Oberon-AllTrade/"
 
 
-# ##### Automatic RegEx Method
+# ##### Retrieve COB date datetime method (only takes into account weekends)
+
+# In[3]:
+
+# retrieve today`s date to output the files with the correct name
+#yesterday = dt.date.today() - timedelta(days=1)
+# the variable yesterday needs to be manually created if yesterday was a holiday example: yesterday=datetime.date(2019, 4, 13)
+
+
+# In[4]:
+
+# exclude weekends (holidays will have to be manually accounted for)
+#if dt.date.weekday(yesterday) not in range (0,5):
+    #yesterday=dt.date.today() - timedelta(days=3)
+
+
+# In[5]:
+
+# store the date into a string
+#lastBusDay=yesterday.strftime("%d.%m.%Y")
+
 
 # In[6]:
 
-os.listdir(path_inputs)
+#lastBusDay
 
+
+# ##### Retrieve COB date QuantLib method (takes into account all uk calendar holidays)
 
 # In[7]:
 
-pattern_Payments  = r"Book.*\.xls" # patterns for the Input Files
-pattern_POS  = r"\d*POS\.csv" 
-pattern_VLN  = r"COB\s\d{8}\.xls" 
-pattern_DFS  = r"DFS\s\d{8}\.xls" 
-pattern_AllTrade  = r"Tri-Optima_AllTrades_Pricing.*" 
-pattern_LE04  = r"LE04.*" # patterns for the CTD
+# load UK calendar
+uk_calendar=UnitedKingdom()
 
 
 # In[8]:
 
-#retrieve Input Files with Regex or Manual input
-for i in os.listdir(path_inputs):  # Regex method
+today = dt.date.today()
+
+
+# In[9]:
+
+dayQ=today.day
+monthQ=today.month
+yearQ=today.year
+
+
+# In[10]:
+
+QBDate=Date(dayQ,monthQ,yearQ)
+
+
+# In[11]:
+
+for i in range(1,30):
+    uk_busdays = uk_calendar.businessDaysBetween(QBDate-i,QBDate)
+    if uk_busdays == 1:
+        lastBusDay_original=QBDate-i
+        break
+
+
+# In[12]:
+
+day=lastBusDay_original.dayOfMonth()
+month=lastBusDay_original.month()
+year=lastBusDay_original.year()
+
+
+# In[13]:
+
+lastBusDay_original=dt.datetime(year,month,day)
+
+
+# In[14]:
+
+# store the date into a string
+lastBusDay=lastBusDay_original.strftime("%d.%m.%Y")
+
+
+# In[15]:
+
+lastBusDay
+
+
+# ## If the date needs to be input manually use the lastBusDay assignment below
+
+# In[16]:
+
+#lastBusDay="mm.dd.yy"
+
+
+# ##### Automatic RegEx Method (Book1 and LE04 are still from input folder)
+
+# In[17]:
+
+# import POS file automatically with regex
+lastBusDayPOS=lastBusDay_original.strftime("%Y%m%d") # format date in appropiate way
+POSPATH="S:/Other/Datafeeds/Oberon1/" 
+pattern_POS  = lastBusDayPOS+r"\d*POS\.csv" 
+for i in os.listdir(POSPATH):  # Regex method
     if re.search(pattern_POS,i):
-        POS_df=pd.read_csv(path_inputs+i,dtype=object)
-    elif re.search(pattern_Payments,i):
+        POS_df=pd.read_csv(POSPATH+i,dtype=object)
+        break
+
+
+# In[18]:
+
+# import Book1 (Oberon payments) from input folder
+pattern_Payments  = r"Book.*\.xls"
+for i in os.listdir(path_inputs):
+    if re.search(pattern_Payments,i):
         Oberon40207=pd.read_excel(path_inputs+i, sheetname="Sheet1")
-    elif re.search(pattern_VLN,i):
-        VLN_df=pd.read_excel(path_inputs+i,sheetname="Sheet1")
-    elif re.search(pattern_DFS,i):
-        DFS_GBPSONIA=pd.read_excel(path_inputs+i, sheetname="GBP SONIA",header=None)
-        DFS_EUREONIA=pd.read_excel(path_inputs+i, sheetname="EUR EONIA",header=None)
-        DFS_USDOISNY=pd.read_excel(path_inputs+i, sheetname="USD OIS NY",header=None)
-    elif re.search(pattern_AllTrade,i):
-        AllTrade_df=pd.read_excel(path_inputs+i,sheetname="Tri-Optima_AllTrades_Pricing")
-    elif re.search(pattern_LE04,i):
+        break
+
+
+# In[19]:
+
+# import VLN file automatically with regex
+lastBusDayVLN=lastBusDay_original.strftime("%d%m%Y") # format date in appropiate way
+VLNPATH="S:/Shared/Operations/Derivatives/Daily MTM File/"
+pattern_VLN  = "COB "+lastBusDayVLN
+for i in os.listdir(VLNPATH):
+    if re.search(pattern_VLN,i):
+        VLN_df=pd.read_excel(VLNPATH+i,sheetname="Sheet1")
+        break
+
+
+# In[20]:
+
+# import All Trade file automatically with regex
+lastBusDayALLTRADE=lastBusDay_original.strftime("%d-%b-%y") # format date in appropiate way 25-Mar-19
+ALLTRADEPATH="//Inv/lgim/FO Operations/Derivative Trade Support/Pricing/Reconciliation Reports/"
+pattern_AllTrade  = r"Tri-Optima_AllTrades_Pricing_"+lastBusDayALLTRADE+".xlsx"
+AllTrade_df=pd.read_excel(ALLTRADEPATH+pattern_AllTrade,sheetname="Tri-Optima_AllTrades_Pricing")
+
+
+# In[21]:
+
+# import LE04 file from input folder
+pattern_LE04  = r"LE04.*"
+for i in os.listdir(path_inputs):
+    if re.search(pattern_LE04 ,i):
         with open(path_inputs+i, encoding='utf8') as LE04_txt: #open the txt file
-            LE04_txt1=LE04_txt.read().replace('\n', '') # read the txt file and substitute the newline symbols with nothin
-        
-    else:    # Manual method
-        VLN_filename=input("Please insert the VLN file name:")
-        AllTrade_filename=input("Please insert the AllTrade file name:")
-        POS_filename=input("Please insert the POS file name :")
-        Oberon40207_filename=input("Please insert the Oberon40207 Report file name :")
-        DFS_filename=input("Please insert the Daily DFS file name :")
-        LE04_filename=input("Please insert the LE04 file name:")
-        complete_path_VLN=path_inputs+VLN_filename+".xls"
-        complete_path_POS=path_inputs+POS_filename+".csv"
-        complete_path_Oberon40207=path_inputs+Oberon40207_filename+".xls"
-        complete_path_DFS=path_inputs+DFS_filename+".xls"
-        complete_path_AllTrade=path_inputs+AllTrade_filename+".xlsx"
-        complete_path_LE04=path_inputs+LE04_filename+".TXT"
-        VLN_df=pd.read_excel(complete_path_VLN,sheetname="Sheet1")
-        AllTrade_df=pd.read_excel(complete_path_AllTrade,sheetname="Tri-Optima_AllTrades_Pricing")
-        POS_df=pd.read_csv(complete_path_POS,dtype=object)
-        Oberon40207=pd.read_excel(complete_path_Oberon40207, sheetname="Sheet1")
-        DFS_GBPSONIA=pd.read_excel(complete_path_DFS, sheetname="GBP SONIA",header=None)
-        DFS_EUREONIA=pd.read_excel(complete_path_DFS, sheetname="EUR EONIA",header=None)
-        DFS_USDOISNY=pd.read_excel(complete_path_DFS, sheetname="USD OIS NY",header=None)
-        with open(complete_path_LE04, encoding='utf8') as LE04_txt:
             LE04_txt1=LE04_txt.read().replace('\n', '')
         break
-   
 
+
+# In[22]:
+
+# import DFS automatically with regex
+DFSfolder1=lastBusDay_original.strftime("%Y/")
+DFSfolder2=lastBusDay_original.strftime("%b %Y/")
+DFSPATH="//Inv/lgim/FO Operations/Derivative Trade Support/Pricing/Life Funds/Discount Factors/"+DFSfolder1+DFSfolder2
+lastBusDayDFS=lastBusDay_original.strftime("%d%m%Y")
+pattern_DFS = "DFS "+lastBusDayDFS+".xls"
+for i in os.listdir(DFSPATH):
+    if re.search(pattern_DFS,i):
+        DFS_GBPSONIA=pd.read_excel(DFSPATH+i, sheetname="GBP SONIA",header=None)
+        DFS_EUREONIA=pd.read_excel(DFSPATH+i, sheetname="EUR EONIA",header=None)
+        DFS_USDOISNY=pd.read_excel(DFSPATH+i, sheetname="USD OIS NY",header=None)
+        break
+
+
+# ### USE THIS IF THERE ARE ISSUES WITH AUTOMATIC METHOD (change cell type from Markdown to Code)
+
+# 
+# #retrieve Input Files with Regex or Manual input from input folder
+# 
+# pattern_Payments  = r"Book.*\.xls" # patterns for the Input Files
+# pattern_POS  = r"\d*POS\.csv"
+# pattern_VLN  = r"COB\s\d{8}\.xls" 
+# pattern_DFS  = r"DFS\s\d{8}\.xls" 
+# pattern_AllTrade  = r"Tri-Optima_AllTrades_Pricing.*" 
+# pattern_LE04  = r"LE04.*" # patterns for the CTD
+# 
+# for i in os.listdir(path_inputs):  # Regex method
+#     if re.search(pattern_POS,i):
+#         POS_df=pd.read_csv(path_inputs+i,dtype=object)
+#     elif re.search(pattern_Payments,i):
+#         Oberon40207=pd.read_excel(path_inputs+i, sheetname="Sheet1")
+#     elif re.search(pattern_VLN,i):
+#         VLN_df=pd.read_excel(path_inputs+i,sheetname="Sheet1")
+#     elif re.search(pattern_DFS,i):
+#         DFS_GBPSONIA=pd.read_excel(path_inputs+i, sheetname="GBP SONIA",header=None)
+#         DFS_EUREONIA=pd.read_excel(path_inputs+i, sheetname="EUR EONIA",header=None)
+#         DFS_USDOISNY=pd.read_excel(path_inputs+i, sheetname="USD OIS NY",header=None)
+#     elif re.search(pattern_AllTrade,i):
+#         AllTrade_df=pd.read_excel(path_inputs+i,sheetname="Tri-Optima_AllTrades_Pricing")
+#     elif re.search(pattern_LE04,i):
+#         with open(path_inputs+i, encoding='utf8') as LE04_txt: #open the txt file
+#             LE04_txt1=LE04_txt.read().replace('\n', '') # read the txt file and substitute the newline symbols with nothin
+#         
+#     else:    # Manual method
+#         VLN_filename=input("Please insert the VLN file name:")
+#         AllTrade_filename=input("Please insert the AllTrade file name:")
+#         POS_filename=input("Please insert the POS file name :")
+#         Oberon40207_filename=input("Please insert the Oberon40207 Report file name :")
+#         DFS_filename=input("Please insert the Daily DFS file name :")
+#         LE04_filename=input("Please insert the LE04 file name:")
+#         complete_path_VLN=path_inputs+VLN_filename+".xls"
+#         complete_path_POS=path_inputs+POS_filename+".csv"
+#         complete_path_Oberon40207=path_inputs+Oberon40207_filename+".xls"
+#         complete_path_DFS=path_inputs+DFS_filename+".xls"
+#         complete_path_AllTrade=path_inputs+AllTrade_filename+".xlsx"
+#         complete_path_LE04=path_inputs+LE04_filename+".TXT"
+#         VLN_df=pd.read_excel(complete_path_VLN,sheetname="Sheet1")
+#         AllTrade_df=pd.read_excel(complete_path_AllTrade,sheetname="Tri-Optima_AllTrades_Pricing")
+#         POS_df=pd.read_csv(complete_path_POS,dtype=object)
+#         Oberon40207=pd.read_excel(complete_path_Oberon40207, sheetname="Sheet1")
+#         DFS_GBPSONIA=pd.read_excel(complete_path_DFS, sheetname="GBP SONIA",header=None)
+#         DFS_EUREONIA=pd.read_excel(complete_path_DFS, sheetname="EUR EONIA",header=None)
+#         DFS_USDOISNY=pd.read_excel(complete_path_DFS, sheetname="USD OIS NY",header=None)
+#         with open(complete_path_LE04, encoding='utf8') as LE04_txt:
+#             LE04_txt1=LE04_txt.read().replace('\n', '')
+#         break
+#    
 
 # #### Data Cleanup
 
 # ##### VLN POS Cleanup
 
-# In[9]:
+# In[23]:
 
 # VLN File remove non needed columns
 VLN_df1=VLN_df[["Swap Type","Ticket","Book","Valuation","Valuation Currency","Valuation Date","Receive Current Principal","Value 1bp(Inflation)","Value 1bp(Interest)"]]
 
 
-# In[10]:
+# In[24]:
 
 # POS File remove non needed columns
 POS_df1=POS_df.filter(['Ticket','Receive Reference Rate','Pay Reference Rate'], axis=1)
 
 
-# In[11]:
+# In[25]:
 
 #POS_df2.groupby('Pay Reference Rate').count()
 
 
-# In[12]:
+# In[26]:
 
 # Create a list of sedols where Receive Reference Rate or Pay Reference Rate are GBP SONIA OIS
 POS_df2_R = POS_df1[POS_df1['Receive Reference Rate'] == 'GBP SONIA OIS']
@@ -151,132 +295,18 @@ POS_df2_P = POS_df2_P.reset_index(drop=True) # reset index
 POS_df2_P_R = POS_df2_P.append(POS_df2_R) # top merge the two dataframes
 
 
-# In[13]:
+# In[27]:
 
 # remove tickets in VLN that are contained in POS_df2_P_R
 VLN_df2 = VLN_df1[~VLN_df1['Ticket'].isin(POS_df2_P_R["Ticket"])]
 VLN_df2 = VLN_df2.reset_index(drop=True) # reset index
 
 
-# In[14]:
+# In[28]:
 
 # remove all the trades that are present in the VLN but they are priced in markit only therefore the value in Oberon is wrong
 # remove all rows with currencies that arent GBP EUR USD CAD and AUD (technically by selecting only the rows with those currencies in column Valuation Currency)
 VLN_df2 = VLN_df2[VLN_df2['Valuation Currency'].isin(["GBP", "EUR","USD","CAD","AUD"])]
-
-
-# In[15]:
-
-# delete rows from AllTrade_df whose Id do not appear in VLN
-AllTrade_df=AllTrade_df[AllTrade_df["SEDOL"].isin(VLN_df2["Ticket"])]
-AllTrade_df=AllTrade_df.reset_index(drop=True) # reset index
-# delete rows from VLN whose Id do not appear in AllTrade_df
-VLN_df2=VLN_df2[VLN_df2["Ticket"].isin(AllTrade_df["SEDOL"])]
-VLN_df2=VLN_df2.reset_index(drop=True) # reset index
-
-
-# ##### All Trade Cleanup
-
-# In[16]:
-
-AllTrade_df=AllTrade_df[['BOOK', 'CPTY NAME', 'SEDOL',"ASSET CLASS","NOTIONAL","MTM DATE","GBP CPTY MTM","MTM CCY"]]
-
-
-# In[17]:
-
-#check for duplicates in All Trade
-duplicated_AllTrade_df1 = AllTrade_df.duplicated(subset="SEDOL", keep="first")
-any(x == True for x in duplicated_AllTrade_df1) # check if there is a True in the list
-
-
-# In[18]:
-
-#check for duplicates in  VLN_df2
-duplicated_VLN_df2 = VLN_df2.duplicated(subset="Ticket", keep="first")
-any(x == True for x in duplicated_VLN_df2) # check if there is a True in the list
-
-
-# In[19]:
-
-# delete rows from AllTrade_df whose Id do not appear in VLN
-AllTrade_df=AllTrade_df[AllTrade_df["SEDOL"].isin(VLN_df2["Ticket"])]
-AllTrade_df=AllTrade_df.reset_index(drop=True) # reset index
-# delete rows from VLN whose Id do not appear in AllTrade_df
-VLN_df2=VLN_df2[VLN_df2["Ticket"].isin(AllTrade_df["SEDOL"])]
-VLN_df2=VLN_df2.reset_index(drop=True) # reset index
-
-
-# In[20]:
-
-#get indices of duplicate id rows in the All Trade and convert to a list
-duplicated_AllTrade_df1 = AllTrade_df.duplicated(subset="SEDOL", keep="first") # using boolean masking
-duplicated_AllTrade_df1= np.where(duplicated_AllTrade_df1 ==True)
-#convert the tuple of indeces to a list
-duplicated_AllTrade_df1=list(duplicated_AllTrade_df1)
-# Create list with the indeces of the duplicate ids rows
-duplicated_AllTrade_df1_list=[]
-for n in duplicated_AllTrade_df1:
-    duplicated_AllTrade_df1_list.extend(n)
-
-
-# In[21]:
-
-AllTrade_df["BOOK"]=AllTrade_df["BOOK"].astype(int) # convert to int just to remove decimal zero
-AllTrade_df["BOOK"]=AllTrade_df["BOOK"].astype(str)# convert book column to string in AllTrade
-
-
-# In[22]:
-
-VLN_df2["Book"]=VLN_df2["Book"].astype(str) # convert book column to string in VLN_df2
-
-
-# In[23]:
-
-# get trade Ids from All trade which are duplicates
-duplicate_TradeIds_AllTrade=[] # this is now a list of trades that are duplicates
-for i in duplicated_AllTrade_df1_list:
-    duplicate_TradeIds_AllTrade.append(AllTrade_df.iloc[i,2])
-
-
-# In[24]:
-
-indicestoremove=[]
-for index, row in AllTrade_df.iterrows():
-    if (AllTrade_df.iloc[index,2]) in (duplicate_TradeIds_AllTrade):#diverso dal book dello stesso sedol in markit, toglilo
-        if AllTrade_df.iloc[index,0]!=VLN_df2.iloc[VLN_df2[VLN_df2['Ticket']==AllTrade_df.iloc[index,2]].index.item(),1]:
-            xxx=VLN_df2.iloc[VLN_df2[VLN_df2['Ticket']==AllTrade_df.iloc[index,2]].index.item(),0]
-            # rimuovi la row dall all trade con l index a cui ti trovi
-            # create list of indices to remove because they are both duplicates and have different book than CTD
-            indicestoremove.append(index)
-
-
-# In[25]:
-
-#remove indices
-AllTrade_df=AllTrade_df.drop(AllTrade_df.index[indicestoremove])
-AllTrade_df=AllTrade_df.reset_index(drop=True)
-
-
-# In[26]:
-
-# delete rows from AllTrade_df whose Id do not appear in VLN
-AllTrade_df=AllTrade_df[AllTrade_df["SEDOL"].isin(VLN_df2["Ticket"])]
-AllTrade_df=AllTrade_df.reset_index(drop=True) # reset index
-# delete rows from VLN whose Id do not appear in AllTrade_df
-VLN_df2=VLN_df2[VLN_df2["Ticket"].isin(AllTrade_df["SEDOL"])]
-VLN_df2=VLN_df2.reset_index(drop=True) # reset index
-
-
-# In[27]:
-
-# remove trades from all trade file that have missing val
-AllTrade_df = AllTrade_df[pd.notnull(AllTrade_df["GBP CPTY MTM"])]
-
-
-# In[28]:
-
-# remove trades from vln file that have missing val
-VLN_df2 = VLN_df2[pd.notnull(VLN_df2["Valuation"])]
 
 
 # In[29]:
@@ -289,15 +319,129 @@ VLN_df2=VLN_df2[VLN_df2["Ticket"].isin(AllTrade_df["SEDOL"])]
 VLN_df2=VLN_df2.reset_index(drop=True) # reset index
 
 
+# ##### All Trade Cleanup
+
+# In[30]:
+
+AllTrade_df=AllTrade_df[['BOOK', 'CPTY NAME', 'SEDOL',"ASSET CLASS","NOTIONAL","MTM DATE","GBP CPTY MTM","MTM CCY"]]
+
+
+# In[31]:
+
+#check for duplicates in All Trade
+duplicated_AllTrade_df1 = AllTrade_df.duplicated(subset="SEDOL", keep="first")
+any(x == True for x in duplicated_AllTrade_df1) # check if there is a True in the list
+
+
+# In[32]:
+
+#check for duplicates in  VLN_df2
+duplicated_VLN_df2 = VLN_df2.duplicated(subset="Ticket", keep="first")
+any(x == True for x in duplicated_VLN_df2) # check if there is a True in the list
+
+
+# In[33]:
+
+# delete rows from AllTrade_df whose Id do not appear in VLN
+AllTrade_df=AllTrade_df[AllTrade_df["SEDOL"].isin(VLN_df2["Ticket"])]
+AllTrade_df=AllTrade_df.reset_index(drop=True) # reset index
+# delete rows from VLN whose Id do not appear in AllTrade_df
+VLN_df2=VLN_df2[VLN_df2["Ticket"].isin(AllTrade_df["SEDOL"])]
+VLN_df2=VLN_df2.reset_index(drop=True) # reset index
+
+
+# In[34]:
+
+#get indices of duplicate id rows in the All Trade and convert to a list
+duplicated_AllTrade_df1 = AllTrade_df.duplicated(subset="SEDOL", keep="first") # using boolean masking
+duplicated_AllTrade_df1= np.where(duplicated_AllTrade_df1 ==True)
+#convert the tuple of indeces to a list
+duplicated_AllTrade_df1=list(duplicated_AllTrade_df1)
+# Create list with the indeces of the duplicate ids rows
+duplicated_AllTrade_df1_list=[]
+for n in duplicated_AllTrade_df1:
+    duplicated_AllTrade_df1_list.extend(n)
+
+
+# In[35]:
+
+AllTrade_df["BOOK"]=AllTrade_df["BOOK"].astype(int) # convert to int just to remove decimal zero
+AllTrade_df["BOOK"]=AllTrade_df["BOOK"].astype(str)# convert book column to string in AllTrade
+
+
+# In[36]:
+
+VLN_df2["Book"]=VLN_df2["Book"].astype(str) # convert book column to string in VLN_df2
+
+
+# In[37]:
+
+# get trade Ids from All trade which are duplicates
+duplicate_TradeIds_AllTrade=[] # this is now a list of trades that are duplicates
+for i in duplicated_AllTrade_df1_list:
+    duplicate_TradeIds_AllTrade.append(AllTrade_df.iloc[i,2])
+
+
+# In[38]:
+
+indicestoremove=[]
+for index, row in AllTrade_df.iterrows():
+    if (AllTrade_df.iloc[index,2]) in (duplicate_TradeIds_AllTrade):#diverso dal book dello stesso sedol in markit, toglilo
+        if AllTrade_df.iloc[index,0]!=VLN_df2.iloc[VLN_df2[VLN_df2['Ticket']==AllTrade_df.iloc[index,2]].index.item(),1]:
+            xxx=VLN_df2.iloc[VLN_df2[VLN_df2['Ticket']==AllTrade_df.iloc[index,2]].index.item(),0]
+            # rimuovi la row dall all trade con l index a cui ti trovi
+            # create list of indices to remove because they are both duplicates and have different book than CTD
+            indicestoremove.append(index)
+
+
+# In[39]:
+
+#remove indices
+AllTrade_df=AllTrade_df.drop(AllTrade_df.index[indicestoremove])
+AllTrade_df=AllTrade_df.reset_index(drop=True)
+
+
+# In[40]:
+
+# delete rows from AllTrade_df whose Id do not appear in VLN
+AllTrade_df=AllTrade_df[AllTrade_df["SEDOL"].isin(VLN_df2["Ticket"])]
+AllTrade_df=AllTrade_df.reset_index(drop=True) # reset index
+# delete rows from VLN whose Id do not appear in AllTrade_df
+VLN_df2=VLN_df2[VLN_df2["Ticket"].isin(AllTrade_df["SEDOL"])]
+VLN_df2=VLN_df2.reset_index(drop=True) # reset index
+
+
+# In[41]:
+
+# remove trades from all trade file that have missing val
+AllTrade_df = AllTrade_df[pd.notnull(AllTrade_df["GBP CPTY MTM"])]
+
+
+# In[42]:
+
+# remove trades from vln file that have missing val
+VLN_df2 = VLN_df2[pd.notnull(VLN_df2["Valuation"])]
+
+
+# In[43]:
+
+# delete rows from AllTrade_df whose Id do not appear in VLN
+AllTrade_df=AllTrade_df[AllTrade_df["SEDOL"].isin(VLN_df2["Ticket"])]
+AllTrade_df=AllTrade_df.reset_index(drop=True) # reset index
+# delete rows from VLN whose Id do not appear in AllTrade_df
+VLN_df2=VLN_df2[VLN_df2["Ticket"].isin(AllTrade_df["SEDOL"])]
+VLN_df2=VLN_df2.reset_index(drop=True) # reset index
+
+
 
 # ##### Quasar LE04
 
-# In[30]:
+# In[44]:
 
 LE04_words=LE04_txt1.split() # split the string file into a list of words
 
 
-# In[31]:
+# In[45]:
 
 Currency=[]
 Currency_Value=[]
@@ -370,7 +514,7 @@ for i in range(len(LE04_words)):
         Currency_Value.append(LE04_words[i+3])
 
 
-# In[32]:
+# In[46]:
 
 # create dataframe with currency name and value
 Currency_df=pd.DataFrame(Currency, columns=['Currency'])
@@ -380,20 +524,20 @@ Currency_df.columns=["Currency","Exchange_Rate"]
 
 # ##### Oberon 40207 Cleanup
 
-# In[33]:
+# In[47]:
 
 # remove all rows where 2nd column is NaN of Oberon report
 Oberon40207_df1=Oberon40207.dropna(subset=["Unnamed: 1"])
 Oberon40207_df1 = Oberon40207_df1.reset_index(drop=True) # reset index
 
 
-# In[34]:
+# In[48]:
 
 # remove all unneded columns
 Oberon40207_df2 = Oberon40207_df1.filter(["Unnamed: 1","Unnamed: 2","Unnamed: 15","Unnamed: 16"], axis=1)
 
 
-# In[35]:
+# In[49]:
 
 # put the dates next to the trades (the oberon report can have any number of dates and trades)
 Oberon40207_df3 = Oberon40207_df2
@@ -417,14 +561,14 @@ for index, row in Oberon40207_df3.iterrows():
 
 
 
-# In[36]:
+# In[50]:
 
 # remove rows where Unnamed 1 is Payment Date
 Oberon40207_df4 = Oberon40207_df3[Oberon40207_df3['Unnamed: 1'] != 'Payment Date :']
 Oberon40207_df4 = Oberon40207_df4.reset_index(drop=True) # reset index
 
 
-# In[37]:
+# In[51]:
 
 # make the first row the header
 Oberon40207_df4.columns = Oberon40207_df4.iloc[0] #give header the first row names
@@ -434,7 +578,7 @@ Oberon40207_df4=Oberon40207_df4.reset_index(drop=True) # resetting index
 
 # ##### Discount Factors for payments
 
-# In[38]:
+# In[52]:
 
 # remove all columns from dfs dataframes after the second
 DFS_USDOISNY1=DFS_USDOISNY[DFS_USDOISNY.columns[0:2]] 
@@ -442,7 +586,7 @@ DFS_GBPSONIA1=DFS_GBPSONIA[DFS_GBPSONIA.columns[0:2]]
 DFS_EUREONIA1=DFS_EUREONIA[DFS_EUREONIA.columns[0:2]] 
 
 
-# In[39]:
+# In[53]:
 
 # renaming the dfs dataframe`s columns
 DFS_USDOISNY1.columns = ['Date', 'DFS']
@@ -450,7 +594,7 @@ DFS_GBPSONIA1.columns = ['Date', 'DFS']
 DFS_EUREONIA1.columns = ['Date', 'DFS']
 
 
-# In[40]:
+# In[54]:
 
 pd.options.mode.chained_assignment = None # disabling chained assignment warnings
 # add the first row as today s date and dfs = 1 because USD and EUR start from tomorrow
@@ -460,25 +604,25 @@ DFS_EUREONIA1.loc[-1] = [DFS_EUREONIA1.iloc[0,0]-timedelta(days=1) ,float(1)]
 DFS_EUREONIA1 = DFS_EUREONIA1.reset_index(drop=True) 
 
 
-# In[41]:
+# In[55]:
 
 Oberon40207_df4['C/Pty Trade ID']=pd.to_datetime(Oberon40207_df4['C/Pty Trade ID'])
 
 
-# In[42]:
+# In[56]:
 
 # change column 1 timestamp format in the Oberon40207_df5.
 Oberon40207_df4['C/Pty Trade ID'] = Oberon40207_df4['C/Pty Trade ID'].dt.strftime('%Y-%m-%d')
 
 
-# In[43]:
+# In[57]:
 
 # create DFS column in Oberon40207_df4
 Oberon40207_df5=Oberon40207_df4
 Oberon40207_df5['DFS']="NaN" # create column
 
 
-# In[44]:
+# In[58]:
 
 # based on the currency and date put the appropiate discount factor next to ticket 
 # DFS_GBPSONIA DFS_EUREONIA DFS_USDOISNY
@@ -492,33 +636,33 @@ for index, row in Oberon40207_df5.iterrows():
         
 
 
-# In[45]:
+# In[59]:
 
 # remove rows of Oberon40207_df5 where DFS is NaN (that means it is a weird currency and it is not priced in Oberon)
 Oberon40207_df5 = Oberon40207_df5[Oberon40207_df5.DFS != "NaN"]
 Oberon40207_df5 = Oberon40207_df5.reset_index(drop=True) # reset index
 
 
-# In[46]:
+# In[60]:
 
 # create discounted amount column
 Oberon40207_df5['Discounted_Amount']="NaN" # create column
 
 
-# In[47]:
+# In[61]:
 
 # Fill in Discounted Amount column
 Oberon40207_df5['Discounted_Amount'] = Oberon40207_df5['Amount'] * Oberon40207_df5['DFS']
 
 
-# In[48]:
+# In[62]:
 
 # remove rows(trades) in Oberon40207_df5 that do not appear in VLN_df2
 Oberon40207_df6 = Oberon40207_df5[Oberon40207_df5['Ticket'].isin(VLN_df2["Ticket"])]
 Oberon40207_df6 = Oberon40207_df6.reset_index(drop=True) # reset index
 
 
-# In[49]:
+# In[63]:
 
 # Fix the VLN_df2 Valuation column by subtracting or adding the Discounted_Amount
 for index, row in Oberon40207_df6.iterrows():
@@ -530,18 +674,18 @@ for index, row in Oberon40207_df6.iterrows():
 
 # ##### Use exchange rates to the AllTrade
 
-# In[50]:
+# In[64]:
 
 # create Exchange_Rate column in AllTrade_df2
 AllTrade_df['Exchange_Rate']="NaN" # create column
 
 
-# In[51]:
+# In[65]:
 
 AllTrade_df2=AllTrade_df
 
 
-# In[52]:
+# In[66]:
 
 # based on the currency put the appropiate exchange rate in the rows
 for index, row in AllTrade_df2.iterrows():
@@ -589,28 +733,28 @@ for index, row in AllTrade_df2.iterrows():
         AllTrade_df2.iloc[index,8]= Currency_df.iloc[indextochange_int,1]
 
 
-# In[53]:
+# In[67]:
 
 # create new Valuation column in AllTrade_df2
 AllTrade_df2['Valuation_AllTrade']="NaN" # create column
 
 
-# In[54]:
+# In[68]:
 
 # change Exchange rate column to float
 AllTrade_df2["Exchange_Rate"]=AllTrade_df2["Exchange_Rate"].astype(float)
-# multiply valuation for the exchange rate
+# divide valuation for the exchange rate
 AllTrade_df2["Valuation_AllTrade"]=AllTrade_df2["GBP CPTY MTM"]/AllTrade_df2["Exchange_Rate"]
 
 
 # #### Use exhange rate to Oberon
 
-# In[55]:
+# In[69]:
 
 VLN_df2['Exchange_Rate']="NaN" # create column
 
 
-# In[56]:
+# In[70]:
 
 # based on the currency put the appropiate exchange rate in the rows
 for index, row in VLN_df2.iterrows():
@@ -658,13 +802,13 @@ for index, row in VLN_df2.iterrows():
         VLN_df2.iloc[index,9]= Currency_df.iloc[indextochange_int,1]
 
 
-# In[57]:
+# In[71]:
 
 # create New Valuation after exchange rates column in VLN_df2
 VLN_df2['Valuation_Oberon']="NaN" # create column
 
 
-# In[58]:
+# In[72]:
 
 # change Exchange rate column to float
 VLN_df2["Exchange_Rate"]=VLN_df2["Exchange_Rate"].astype(float)
@@ -672,19 +816,19 @@ VLN_df2["Exchange_Rate"]=VLN_df2["Exchange_Rate"].astype(float)
 VLN_df2["Valuation_Oberon"]=VLN_df2["Valuation"]/VLN_df2["Exchange_Rate"]
 
 
-# In[59]:
+# In[73]:
 
 VLN_df2.head()
 
 
-# In[60]:
+# In[74]:
 
 VLN_df2.Valuation_Oberon.isnull().values.any()
 
 
 # ## Create Tolerance Breaks Exceptions
 
-# In[61]:
+# In[75]:
 
 # rename the ticket column to sedol in order to merge
 VLN_df2= VLN_df2.rename(index=str, columns={"Ticket":"SEDOL"})
@@ -692,35 +836,35 @@ VLN_df2= VLN_df2.rename(index=str, columns={"Ticket":"SEDOL"})
 Final_df=pd.merge(VLN_df2, AllTrade_df2, on="SEDOL")
 
 
-# In[62]:
+# In[76]:
 
 # pick only the needed columns
 Final_df=Final_df[["SEDOL","Swap Type","Book","Valuation Date","NOTIONAL","CPTY NAME","Valuation_AllTrade","Valuation_Oberon","Value 1bp(Interest)"]]
 
 
-# In[63]:
+# In[77]:
 
 Final_df.head()
 
 
-# In[64]:
+# In[78]:
 
 # create the required columns
 
 
-# In[65]:
+# In[79]:
 
 # difference in Valuation for Swaps and Swaptions
 Final_df['Diff_AllTrade_Oberon'] = abs(abs(Final_df['Valuation_AllTrade']) - abs(Final_df['Valuation_Oberon']) )
 
 
-# In[66]:
+# In[80]:
 
 # Create column with absolute tolerance exceptions
 Final_df['Abs_Tolerance']="NaN" # create column
 
 
-# In[67]:
+# In[81]:
 
 # fill in Abs Tolerance
 for index, row in Final_df.iterrows():
@@ -733,30 +877,30 @@ for index, row in Final_df.iterrows():
     
 
 
-# In[68]:
+# In[82]:
 
 Final_df.Diff_AllTrade_Oberon.isnull().values.any()
 
 
-# In[69]:
+# In[83]:
 
 # create pv01 tolerance for the swaps
 Final_df['PV01_Tolerance']="NaN" # create column
 
 
-# In[70]:
+# In[84]:
 
 # fill in Pv01 Tolerance
 Final_df['PV01_Tolerance'] = Final_df['Diff_AllTrade_Oberon'] / abs(Final_df["Value 1bp(Interest)"]) 
 
 
-# In[71]:
+# In[85]:
 
 # create PV01 exceptions column
 Final_df['PV01_Exceptions']="NaN" # create column
 
 
-# In[72]:
+# In[86]:
 
 # fill in PV01 Exceptions
 for index, row in Final_df.iterrows():
@@ -766,63 +910,61 @@ for index, row in Final_df.iterrows():
         Final_df.iloc[index, 12]=0
 
 
-# In[73]:
+# In[87]:
 
 # add % of notional column
 Final_df['%Notional']="NaN" # create column
 
 
-# In[74]:
+# In[88]:
 
 # fill in % of notional column
 Final_df['%Notional'] = Final_df["Diff_AllTrade_Oberon"] / Final_df["NOTIONAL"]
 
 
-# In[75]:
+# In[89]:
 
 # add Exceptions column
 Final_df['Exceptions']="NaN" # create column
 
 
-# In[76]:
+# In[90]:
 
 # fill in Exceptions
 for index, row in Final_df.iterrows():
     if int(Final_df.iloc[index, 10])>=2 and int(Final_df.iloc[index, 12])>0:
-        Final_df.iloc[index, 14]=1
+        Final_df.iloc[index, 14]="CHECK"
     else:
-        Final_df.iloc[index, 14]=0
+        Final_df.iloc[index, 14]="OK"
 
 
-# In[77]:
+# In[91]:
+
+# renaming valuation columns to make the currency clear
+Final_df= Final_df.rename(index=str, columns={"Valuation_Oberon":"Valuation_AllTrade(GBP)"})
+Final_df= Final_df.rename(index=str, columns={"Valuation_AllTrade":"Valuation_AllTrade(GBP)"})
+
+
+# In[92]:
 
 Final_df.Exceptions.value_counts()
 
 
-# In[78]:
+# In[93]:
 
 path_Output="//Inv/lgim/FO Operations/Derivative Trade Support/Pricing/Tolerance Breaks Outputs"
 path_Output_Archive="//Inv/lgim/FO Operations/Derivative Trade Support/Pricing/Tolerance Breaks Outputs/Archive"
 
 
-# In[79]:
+# In[94]:
 
 # file names
 file_name="\Breaks Oberon-AllTrade "+lastBusDay+".csv"
 
 
-# In[80]:
+# In[95]:
 
 # write to csv
 Final_df.to_csv(path_Output+file_name,header=True,index=False) # write once in the general folder for messing about
 Final_df.to_csv(path_Output_Archive+file_name,header=True,index=False) # write once in Archive
 
-
-# ### Please note 
-
-# - removes the trades in Oberon that arent GBP,EUR,USD,CAD or AUD because the value in Oberon is wrong
-# - removes non shared trades
-# - duplicates in All trade are selected based on fund (if fund matches in Oberon)
-# - removes All trade file sedols with no valuation
-# - It uses the Valuation in oberon converted with exhcange rates in GBP, and uses All Trade CPTY MTM converted to GBP with excghange rates
-# - removes trades in Oberon or All Trade with valuation missing

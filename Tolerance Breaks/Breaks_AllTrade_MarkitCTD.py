@@ -15,6 +15,12 @@
 #  - Exception Column when Relative and Absolute are both broken
 #  - % of notional column
 
+# ##### Please note:
+# - removes non shared trades
+# - duplicates in All trade are selected based on fund (if fund matches in Markit)
+# - removes All trade file  sedols with no valuation
+# - It uses markits PresentValue which is in GBP and converts the all trade counterparty MTM to GBP
+
 # ## Code
 
 # In[1]:
@@ -26,95 +32,181 @@ from datetime import datetime, timedelta
 import os
 import re
 import datetime
+from QuantLib import *
 
 
 # In[2]:
-
-# retrieve today`s date to output the files with the correct name
-yesterday = datetime.date.today() - timedelta(days=1)
-# the variable yesterday needs to be manually created if yesterday was a holiday example: yesterday=datetime.date(2019, 4, 13)
-
-
-# In[3]:
-
-# exclude weekends (holidays will have to be manually accounted for)
-if datetime.date.weekday(yesterday) not in range (0,5):
-    yesterday=datetime.date.today() - timedelta(days=3)
-
-
-# In[4]:
-
-# store the date into a string
-lastBusDay=yesterday.strftime("%d.%m.%Y")
-
-
-# ### Import using RegEx, if no match manually input names
-
-# In[5]:
 
 # inputs path
 path_inputs="//Inv/lgim/FO Operations/Derivative Trade Support/Pricing/Tolerance Breaks Outputs/Input All Trade/"
 
 
+# ##### Retrieve COB date datetime method (only takes into account weekends)
+
+# In[3]:
+
+# retrieve today`s date to output the files with the correct name
+#yesterday = datetime.date.today() - timedelta(days=1)
+# the variable yesterday needs to be manually created if yesterday was a holiday example: yesterday=datetime.date(2019, 4, 13)
+
+
+# In[4]:
+
+# exclude weekends (holidays will have to be manually accounted for)
+#if datetime.date.weekday(yesterday) not in range (0,5):
+    #yesterday=datetime.date.today() - timedelta(days=3)
+
+
+# In[5]:
+
+# store the date into a string
+#lastBusDay=yesterday.strftime("%d.%m.%Y")
+
+
+# ##### Retrieve COB date QuantLib method (takes into account all uk calendar holidays)
+
 # In[6]:
 
-os.listdir(path_inputs)
+# load UK calendar
+uk_calendar=UnitedKingdom()
 
 
 # In[7]:
 
-pattern_AllTrade  = r"Tri-Optima_AllTrades_Pricing.*" # patterns for the AllTrade
+today = datetime.date.today()
 
 
 # In[8]:
 
-pattern_LE04  = r"LE04.*" # patterns for the CTD
+dayQ=today.day
+monthQ=today.month
+yearQ=today.year
 
 
 # In[9]:
 
-pattern_CTD  = r".*LGIM_NY_Rates_CTD.*" # patterns for the LE04
+QBDate=Date(dayQ,monthQ,yearQ)
 
 
 # In[10]:
 
-#retrieve Input Files with Regex or Manual input
+for i in range(1,30):
+    uk_busdays = uk_calendar.businessDaysBetween(QBDate-i,QBDate)
+    if uk_busdays == 1:
+        lastBusDay_original=QBDate-i
+        break
+
+
+# In[11]:
+
+day=lastBusDay_original.dayOfMonth()
+month=lastBusDay_original.month()
+year=lastBusDay_original.year()
+
+
+# In[12]:
+
+lastBusDay_original=datetime.datetime(year,month,day)
+
+
+# In[13]:
+
+# store the date into a string
+lastBusDay=lastBusDay_original.strftime("%d.%m.%Y")
+
+
+# In[14]:
+
+lastBusDay
+
+
+# ## If the date needs to be input manually use the lastBusDay assignment below
+
+# In[15]:
+
+#lastBusDay="mm.dd.yy"
+
+
+# ##### Automatic RegEx Method (Markit CTD and LE04 are still from input folder)
+
+# In[16]:
+
+# import All Trade file automatically with regex
+lastBusDayALLTRADE=lastBusDay_original.strftime("%d-%b-%y") # format date in appropiate way 25-Mar-19
+ALLTRADEPATH="//Inv/lgim/FO Operations/Derivative Trade Support/Pricing/Reconciliation Reports/"
+pattern_AllTrade  = r"Tri-Optima_AllTrades_Pricing_"+lastBusDayALLTRADE+".xlsx"
+AllTrade_df=pd.read_excel(ALLTRADEPATH+pattern_AllTrade,sheetname="Tri-Optima_AllTrades_Pricing")
+
+
+# In[17]:
+
+# import LE04 file from input folder
+pattern_LE04  = r"LE04.*"
+for i in os.listdir(path_inputs):
+    if re.search(pattern_LE04 ,i):
+        with open(path_inputs+i, encoding='utf8') as LE04_txt: #open the txt file
+            LE04_txt1=LE04_txt.read().replace('\n', '')
+        break
+
+
+# In[18]:
+
+# import markit ctd from imput folder
+
+
+# In[19]:
+
+pattern_CTD  = r".*LGIM_NY_Rates_CTD.*" # patterns for the LE04
 for i in os.listdir(path_inputs):   # Regex method
-    if re.search(pattern_AllTrade,i):
-        AllTrade_df=pd.read_excel(path_inputs+i,sheetname="Tri-Optima_AllTrades_Pricing")
-    elif re.search(pattern_CTD,i):
+    if re.search(pattern_CTD,i):
         CTD_Swap_df=pd.read_excel(path_inputs+i,sheetname="Swap")
         CTD_InfSwap_df=pd.read_excel(path_inputs+i,sheetname="InfSwap")
         CTD_Swaption_df=pd.read_excel(path_inputs+i,sheetname="Swaption")
-    elif re.search(pattern_LE04,i):
-        with open(path_inputs+i, encoding='utf8') as LE04_txt: #open the txt file
-            LE04_txt1=LE04_txt.read().replace('\n', '') # read the txt file and substitute the newline symbols with nothing
-    else:                     # Manual method
-        AllTrade_filename=input("Please insert the AllTrade file name:")
-        CTD_filename=input("Please insert the CTD file name:")
-        LE04_filename=input("Please insert the LE04 file name:")
-        complete_path_AllTrade=path_inputs+AllTrade_filename+".xlsx"
-        complete_path_CTD=path_inputs+CTD_filename+".xls"
-        complete_path_LE04=path_inputs+LE04_filename+".TXT"
-        AllTrade_df=pd.read_excel(complete_path_AllTrade,sheetname="Tri-Optima_AllTrades_Pricing")
-        CTD_Swap_df=pd.read_excel(complete_path_CTD,sheetname="Swap")
-        CTD_InfSwap_df=pd.read_excel(complete_path_CTD,sheetname="InfSwap")
-        CTD_Swaption_df=pd.read_excel(complete_path_CTD,sheetname="Swaption")
-        with open(complete_path_LE04, encoding='utf8') as LE04_txt:
-            LE04_txt1=LE04_txt.read().replace('\n', '')
         break
- 
-        
-        
-        
-   
 
+
+# ### USE THIS IF THERE ARE ISSUES WITH AUTOMATIC METHOD (change cell type from Markdown to Code)
+
+# pattern_AllTrade  = r"Tri-Optima_AllTrades_Pricing.*" # patterns for the AllTrade
+# pattern_LE04  = r"LE04.*" # patterns for the CTD
+# pattern_CTD  = r".*LGIM_NY_Rates_CTD.*" # patterns for the LE04
+# 
+# #retrieve Input Files with Regex or Manual input
+# for i in os.listdir(path_inputs):   # Regex method
+#     if re.search(pattern_AllTrade,i):
+#         AllTrade_df=pd.read_excel(path_inputs+i,sheetname="Tri-Optima_AllTrades_Pricing")
+#     elif re.search(pattern_CTD,i):
+#         CTD_Swap_df=pd.read_excel(path_inputs+i,sheetname="Swap")
+#         CTD_InfSwap_df=pd.read_excel(path_inputs+i,sheetname="InfSwap")
+#         CTD_Swaption_df=pd.read_excel(path_inputs+i,sheetname="Swaption")
+#     elif re.search(pattern_LE04,i):
+#         with open(path_inputs+i, encoding='utf8') as LE04_txt: #open the txt file
+#             LE04_txt1=LE04_txt.read().replace('\n', '') # read the txt file and substitute the newline symbols with nothing
+#     else:                     # Manual method
+#         AllTrade_filename=input("Please insert the AllTrade file name:")
+#         CTD_filename=input("Please insert the CTD file name:")
+#         LE04_filename=input("Please insert the LE04 file name:")
+#         complete_path_AllTrade=path_inputs+AllTrade_filename+".xlsx"
+#         complete_path_CTD=path_inputs+CTD_filename+".xls"
+#         complete_path_LE04=path_inputs+LE04_filename+".TXT"
+#         AllTrade_df=pd.read_excel(complete_path_AllTrade,sheetname="Tri-Optima_AllTrades_Pricing")
+#         CTD_Swap_df=pd.read_excel(complete_path_CTD,sheetname="Swap")
+#         CTD_InfSwap_df=pd.read_excel(complete_path_CTD,sheetname="InfSwap")
+#         CTD_Swaption_df=pd.read_excel(complete_path_CTD,sheetname="Swaption")
+#         with open(complete_path_LE04, encoding='utf8') as LE04_txt:
+#             LE04_txt1=LE04_txt.read().replace('\n', '')
+#         break
+#  
+#         
+#         
+#         
+#    
 
 # ### Data Cleanup
 
 # ##### CTD
 
-# In[11]:
+# In[20]:
 
 # rename column labels with the actual column names
 CTD_Swaption_df.columns = CTD_Swaption_df.iloc[2] #give header row 2 names
@@ -127,7 +219,7 @@ CTD_Swap_df.columns = CTD_Swap_df.iloc[2] #give header row 2 names
 CTD_Swap_df=CTD_Swap_df.reset_index(drop=True) # resetting index
 
 
-# In[12]:
+# In[21]:
 
 # remove markits header
 CTD_Swaption_df= CTD_Swaption_df.drop([0,1,2])# remove the first three rows
@@ -138,7 +230,7 @@ CTD_InfSwap_df=CTD_InfSwap_df.reset_index(drop=True) #resetting index
 CTD_Swaption_df=CTD_Swaption_df.reset_index(drop=True) #resetting index
 
 
-# In[13]:
+# In[22]:
 
 # remove non needed columns
 CTD_Swaption_df=CTD_Swaption_df[['TradeId', 'Book',"LocalCcy", 'PresentValue',"SwaptionVega"]]
@@ -146,7 +238,7 @@ CTD_InfSwap_df=CTD_InfSwap_df[['TradeId', 'Book', 'LegId',"LocalCcy","PresentVal
 CTD_Swap_df=CTD_Swap_df[['TradeId', 'Book', 'LegId',"LocalCcy","PresentValue","NetPV01"]]
 
 
-# In[14]:
+# In[23]:
 
 # top merge Swaps and InfSwaps in a single dataframe
 CTD_AllSwaps=CTD_InfSwap_df.append(CTD_Swap_df)
@@ -154,7 +246,7 @@ CTD_AllSwaps=CTD_InfSwap_df.append(CTD_Swap_df)
 CTD_AllSwaps=CTD_AllSwaps.reset_index(drop=True)
 
 
-# In[15]:
+# In[24]:
 
 # remove all rows with LegId non-NaN
 CTD_AllSwaps =CTD_AllSwaps[pd.isnull(CTD_AllSwaps['LegId'])]
@@ -162,7 +254,7 @@ CTD_AllSwaps =CTD_AllSwaps[pd.isnull(CTD_AllSwaps['LegId'])]
 CTD_AllSwaps=CTD_AllSwaps.reset_index(drop=True)
 
 
-# In[16]:
+# In[25]:
 
 # remove legId column
 CTD_AllSwaps=CTD_AllSwaps.drop(["LegId"],axis=1)
@@ -170,12 +262,12 @@ CTD_AllSwaps=CTD_AllSwaps.drop(["LegId"],axis=1)
 
 # ##### All Trade
 
-# In[17]:
+# In[26]:
 
 AllTrade_df=AllTrade_df[['BOOK', 'CPTY NAME', 'SEDOL',"ASSET CLASS","NOTIONAL","MTM DATE","GBP CPTY MTM","MTM CCY"]]
 
 
-# In[18]:
+# In[27]:
 
 # delete rows from CTD_AllSwaps whose Id do not appear in AllTrade_df
 CTD_AllSwaps1=CTD_AllSwaps[CTD_AllSwaps["TradeId"].isin(AllTrade_df["SEDOL"])]
@@ -185,20 +277,20 @@ AllTrade_df1=AllTrade_df[AllTrade_df["SEDOL"].isin(CTD_AllSwaps["TradeId"])]
 AllTrade_df1=AllTrade_df1.reset_index(drop=True) # reset index
 
 
-# In[19]:
+# In[28]:
 
 #check for duplicates in All Trade and CTD all swaps
 duplicated_AllTrade_df1 = AllTrade_df1.duplicated(subset="SEDOL", keep="first")
 any(x == True for x in duplicated_AllTrade_df1) # check if there is a True in the list
 
 
-# In[20]:
+# In[29]:
 
 duplicated_CTD_AllSwaps1 = CTD_AllSwaps1.duplicated(subset="TradeId", keep="first")
 any(x == True for x in duplicated_CTD_AllSwaps1) # check if there is a True in the list
 
 
-# In[21]:
+# In[30]:
 
 #get indices of duplicate id rows in the All Trade and convert to a list
 duplicated_AllTrade_df1 = AllTrade_df1.duplicated(subset="SEDOL", keep="first") # using boolean masking
@@ -211,17 +303,17 @@ for n in duplicated_AllTrade_df1:
     duplicated_AllTrade_df1_list.extend(n)
 
 
-# In[22]:
+# In[31]:
 
 CTD_AllSwaps1["Book"]=CTD_AllSwaps1["Book"].astype(int) # convert book column to integer in AllSwaps
 
 
-# In[23]:
+# In[32]:
 
 AllTrade_df1["BOOK"]=AllTrade_df1["BOOK"].astype(int) # convert book column to integer in AllTrade
 
 
-# In[24]:
+# In[33]:
 
 # get trade Ids from All trade which are duplicates
 duplicate_TradeIds_AllTrade=[] # this is now a list of trades that are duplicates
@@ -229,7 +321,7 @@ for i in duplicated_AllTrade_df1_list:
     duplicate_TradeIds_AllTrade.append(AllTrade_df1.iloc[i,2])
 
 
-# In[25]:
+# In[34]:
 
 indicestoremove=[]
 for index, row in AllTrade_df1.iterrows():
@@ -241,7 +333,7 @@ for index, row in AllTrade_df1.iterrows():
             indicestoremove.append(index)
 
 
-# In[26]:
+# In[35]:
 
 #remove indices
 # the new AllTrade_df2 will not have the duplicated sedols with book that is different from the ctd file
@@ -249,12 +341,12 @@ for index, row in AllTrade_df1.iterrows():
 AllTrade_df1=AllTrade_df1.drop(AllTrade_df1.index[indicestoremove])
 
 
-# In[27]:
+# In[36]:
 
 AllTrade_df2=AllTrade_df1.reset_index(drop=True)
 
 
-# In[28]:
+# In[37]:
 
 # delete rows from CTD_AllSwaps whose Id do not appear in AllTrade_df
 CTD_AllSwaps1=CTD_AllSwaps1[CTD_AllSwaps1["TradeId"].isin(AllTrade_df2["SEDOL"])]
@@ -264,13 +356,13 @@ AllTrade_df2=AllTrade_df2[AllTrade_df2["SEDOL"].isin(CTD_AllSwaps1["TradeId"])]
 AllTrade_df2=AllTrade_df2.reset_index(drop=True) # reset index
 
 
-# In[29]:
+# In[38]:
 
 # remove trades from all trade file that have missing val
 AllTrade_df2 = AllTrade_df2[pd.notnull(AllTrade_df2["GBP CPTY MTM"])]
 
 
-# In[30]:
+# In[39]:
 
 # delete rows from CTD_AllSwaps whose Id do not appear in AllTrade_df
 CTD_AllSwaps1=CTD_AllSwaps1[CTD_AllSwaps1["TradeId"].isin(AllTrade_df2["SEDOL"])]
@@ -280,7 +372,7 @@ AllTrade_df2=AllTrade_df2[AllTrade_df2["SEDOL"].isin(CTD_AllSwaps1["TradeId"])]
 AllTrade_df2=AllTrade_df2.reset_index(drop=True) # reset index
 
 
-# In[31]:
+# In[40]:
 
 #check for duplicates in AllTrade_df2
 duplicated_AllTrade_df2 = AllTrade_df2.duplicated(subset="SEDOL", keep="first")
@@ -289,12 +381,12 @@ any(x == True for x in duplicated_AllTrade_df2) # check if there is a True in th
 
 # ##### Quasar LE04
 
-# In[32]:
+# In[41]:
 
 LE04_words=LE04_txt1.split() # split the string file into a list of words
 
 
-# In[33]:
+# In[42]:
 
 Currency=[]
 Currency_Value=[]
@@ -367,7 +459,7 @@ for i in range(len(LE04_words)):
         Currency_Value.append(LE04_words[i+3])
 
 
-# In[34]:
+# In[43]:
 
 # create dataframe with currency name and value
 Currency_df=pd.DataFrame(Currency, columns=['Currency'])
@@ -377,49 +469,49 @@ Currency_df.columns=["Currency","Exchange_Rate"]
 
 # ##### Swaptions Cleanup and Analysis
 
-# In[35]:
+# In[44]:
 
 # convert sedol columns to string
 CTD_Swaption_df["TradeId"]=CTD_Swaption_df["TradeId"].astype(str)
 AllTrade_df["SEDOL"]=AllTrade_df["SEDOL"].astype(str)
 
 
-# In[36]:
+# In[45]:
 
 # delete rows from CTD_Swaption_df whose Id do not appear in AllTrade_df
 CTD_Swaption_df1=CTD_Swaption_df[CTD_Swaption_df["TradeId"].isin(AllTrade_df["SEDOL"])]
 CTD_Swaption_df1=CTD_Swaption_df1.reset_index(drop=True) # reset index
 
 
-# In[37]:
+# In[46]:
 
 # delete rows from CTD_Swaption_df whose Id do not appear in AllTrade_df
 AllTrade_Swaptions=AllTrade_df[AllTrade_df["SEDOL"].isin(CTD_Swaption_df1["TradeId"])]
 AllTrade_Swaptions=AllTrade_Swaptions.reset_index(drop=True) # reset index
 
 
-# In[38]:
+# In[47]:
 
-# convert sedols to string
+# convert fund column to int
 AllTrade_Swaptions["BOOK"]=AllTrade_Swaptions["BOOK"].astype(int) # convert the book columns to int
 CTD_Swaption_df1["Book"]=CTD_Swaption_df1["Book"].astype(int) # convert the book columns to int
 
 
-# In[39]:
+# In[48]:
 
 #check for duplicates in all ctd swaption
 duplicated_CTD_Swaption_df1 = CTD_Swaption_df1.duplicated(subset="TradeId", keep="first")
 any(x == True for x in duplicated_CTD_Swaption_df1) # check if there is a True in the list
 
 
-# In[40]:
+# In[49]:
 
 #check for duplicates in  all trade swaption
 duplicated_AllTrade_Swaptions = AllTrade_Swaptions.duplicated(subset="SEDOL", keep="first")
 any(x == True for x in duplicated_AllTrade_Swaptions) # check if there is a True in the list
 
 
-# In[41]:
+# In[50]:
 
 #get indices of duplicate id rows in the All Trade swaptions and convert to a list
 duplicated_AllTrade_Swaptions_df1 = AllTrade_Swaptions.duplicated(subset="SEDOL", keep="first") # using boolean masking
@@ -432,7 +524,7 @@ for n in duplicated_AllTrade_Swaptions_df1:
     duplicated_AllTrade_Swaptions_df1_list.extend(n) 
 
 
-# In[42]:
+# In[51]:
 
 # get trade Ids from All trades which are duplicates
 duplicate_TradeIds_AllTrade_Swaptions=[] # this is now a list of trades that are duplicates
@@ -440,7 +532,7 @@ for i in duplicated_AllTrade_Swaptions_df1_list:
     duplicate_TradeIds_AllTrade_Swaptions.append(AllTrade_Swaptions.iloc[i,2])
 
 
-# In[43]:
+# In[52]:
 
 indicestoremoveswaptions=[]
 for index, row in AllTrade_Swaptions.iterrows():
@@ -452,7 +544,7 @@ for index, row in AllTrade_Swaptions.iterrows():
             indicestoremoveswaptions.append(index)
 
 
-# In[44]:
+# In[53]:
 
 #remove indices
 # the new AllTrade_df2 will not have the duplicated sedols with book that is different from the ctd file
@@ -460,12 +552,12 @@ for index, row in AllTrade_Swaptions.iterrows():
 AllTrade_Swaptions=AllTrade_Swaptions.drop(AllTrade_Swaptions.index[indicestoremoveswaptions])
 
 
-# In[45]:
+# In[54]:
 
 AllTrade_Swaptions=AllTrade_Swaptions.reset_index(drop=True)
 
 
-# In[46]:
+# In[55]:
 
 # remove trades from all trade swaption file that have missing 
 #AllTrade_Swaptions= AllTrade_Swaptions[AllTrade_Swaptions["GBP CPTY MTM"] != 0]
@@ -473,33 +565,33 @@ AllTrade_Swaptions = AllTrade_Swaptions[pd.notnull(AllTrade_Swaptions["GBP CPTY 
 AllTrade_Swaptions=AllTrade_Swaptions.reset_index(drop=True)
 
 
-# In[47]:
+# In[56]:
 
 # delete rows from CTD_Swaption_df whose Id do not appear in AllTrade_df
 CTD_Swaption_df1=CTD_Swaption_df1[CTD_Swaption_df1["TradeId"].isin(AllTrade_Swaptions["SEDOL"])]
 CTD_Swaption_df1=CTD_Swaption_df1.reset_index(drop=True) # reset index
 
 
-# In[48]:
+# In[57]:
 
 # delete rows from CTD_Swaption_df whose Id do not appear in AllTrade_df
 AllTrade_Swaptions=AllTrade_Swaptions[AllTrade_Swaptions["SEDOL"].isin(CTD_Swaption_df1["TradeId"])]
 AllTrade_Swaptions=AllTrade_Swaptions.reset_index(drop=True) # reset index
 
 
-# In[49]:
+# In[58]:
 
 # Change All Trade Valuation based on Exchange Rates
 AllTrade_Swaptions["BOOK"]=AllTrade_Swaptions["BOOK"].astype(int)
 
 
-# In[50]:
+# In[59]:
 
 # create Exchange_Rate column in AllTrade_Swaptions
 AllTrade_Swaptions['Exchange_Rate']="NaN" # create column
 
 
-# In[51]:
+# In[60]:
 
 # based on the currency put the appropiate exchange rate in the rows
 for index, row in AllTrade_Swaptions.iterrows():
@@ -548,13 +640,13 @@ for index, row in AllTrade_Swaptions.iterrows():
 
 
 
-# In[52]:
+# In[61]:
 
 # Create column with the correct Valuation in the All trade for SWAPTIONS
 AllTrade_Swaptions['Valuation_AllTrade']="NaN" # create column
 
 
-# In[53]:
+# In[62]:
 
 # change Exchange rate column to float
 AllTrade_Swaptions["Exchange_Rate"]=AllTrade_Swaptions["Exchange_Rate"].astype(float)
@@ -562,7 +654,7 @@ AllTrade_Swaptions["Exchange_Rate"]=AllTrade_Swaptions["Exchange_Rate"].astype(f
 AllTrade_Swaptions["Valuation_AllTrade"]=AllTrade_Swaptions["GBP CPTY MTM"]/AllTrade_Swaptions["Exchange_Rate"]
 
 
-# In[54]:
+# In[63]:
 
 # Swaptions final dataframe merging ctd to all trade
 #rename CTD Trade id column to SEDOL in order to use the merge function
@@ -571,7 +663,7 @@ CTD_Swaption_df1= CTD_Swaption_df1.rename(index=str, columns={"TradeId":"SEDOL"}
 Final_df_Swaptions=pd.merge(CTD_Swaption_df1, AllTrade_Swaptions, on="SEDOL")
 
 
-# In[55]:
+# In[64]:
 
 # remove non needed columns
 Final_df_Swaptions=Final_df_Swaptions[['SEDOL', 'Book',"LocalCcy","CPTY NAME","ASSET CLASS","MTM DATE","NOTIONAL",'PresentValue',"Valuation_AllTrade","SwaptionVega"]]
@@ -579,18 +671,18 @@ Final_df_Swaptions=Final_df_Swaptions[['SEDOL', 'Book',"LocalCcy","CPTY NAME","A
 
 # ## Swap Analysis
 
-# In[56]:
+# In[65]:
 
 # Change All Trade Valuation based on Exchange Rates # CTD_AllSwaps1 AllTrade_df2
 
 
-# In[57]:
+# In[66]:
 
 # create Exchange_Rate column in AllTrade_df2
 AllTrade_df2['Exchange_Rate']="NaN" # create column
 
 
-# In[58]:
+# In[67]:
 
 # based on the currency put the appropiate exchange rate in the rows
 for index, row in AllTrade_df2.iterrows():
@@ -638,13 +730,13 @@ for index, row in AllTrade_df2.iterrows():
         AllTrade_df2.iloc[index,8]= Currency_df.iloc[indextochange_int,1]
 
 
-# In[59]:
+# In[68]:
 
 # create New Valuation after exchange rates column in AllTrade_df2
 AllTrade_df2['Valuation_AllTrade']="NaN" # create column
 
 
-# In[60]:
+# In[69]:
 
 # change Exchange rate column to float
 AllTrade_df2["Exchange_Rate"]=AllTrade_df2["Exchange_Rate"].astype(float)
@@ -652,14 +744,14 @@ AllTrade_df2["Exchange_Rate"]=AllTrade_df2["Exchange_Rate"].astype(float)
 AllTrade_df2["Valuation_AllTrade"]=AllTrade_df2["GBP CPTY MTM"]/AllTrade_df2["Exchange_Rate"]
 
 
-# In[61]:
+# In[70]:
 
 # Create a unique dataframe with CTD and ALL Trade for Swaps and Swaptions 
 # SWAPS: AllTrade_df2 & CTD_AllSwaps1 -> Final_df_Swap
 # SWAPTIONS: AllTrade_Swaptions & CTD_Swaption_df1 -> Final_df_Swaptions
 
 
-# In[62]:
+# In[71]:
 
 # Swaps final dataframe merging markit ctd to all trade
 #rename CTD Trade id column to SEDOL in order to use the merge function
@@ -668,7 +760,7 @@ CTD_AllSwaps1= CTD_AllSwaps1.rename(index=str, columns={"TradeId":"SEDOL"})
 Final_df_Swap=pd.merge(CTD_AllSwaps1, AllTrade_df2, on="SEDOL")
 
 
-# In[63]:
+# In[72]:
 
 # remove non needed columns
 Final_df_Swap=Final_df_Swap[['SEDOL', 'Book',"LocalCcy","CPTY NAME","ASSET CLASS","MTM DATE","NOTIONAL",'PresentValue',"Valuation_AllTrade","NetPV01"]]
@@ -676,21 +768,21 @@ Final_df_Swap=Final_df_Swap[['SEDOL', 'Book',"LocalCcy","CPTY NAME","ASSET CLASS
 
 # ##### Create Tolerance Breaks Exceptions
 
-# In[64]:
+# In[73]:
 
 # difference in Valuation for Swaps and Swaptions
 Final_df_Swaptions['AllTrade_MarkitCTD_Diff'] = abs(abs(Final_df_Swaptions['Valuation_AllTrade']) - abs(Final_df_Swaptions['PresentValue']) )
 Final_df_Swap['AllTrade_MarkitCTD_Diff'] = abs(abs(Final_df_Swap['Valuation_AllTrade']) - abs(Final_df_Swap['PresentValue']) )
 
 
-# In[65]:
+# In[74]:
 
 # Create column with absolute tolerance exceptions
 Final_df_Swaptions['Abs_Tolerance']="NaN" # create column
 Final_df_Swap['Abs_Tolerance']="NaN" # create column
 
 
-# In[66]:
+# In[75]:
 
 # fill in Abs Tolerance : Swaps
 for index, row in Final_df_Swap.iterrows():
@@ -703,7 +795,7 @@ for index, row in Final_df_Swap.iterrows():
     
 
 
-# In[67]:
+# In[76]:
 
 # fill in Abs Tolerance : Swaptions
 for index, row in Final_df_Swaptions.iterrows():
@@ -716,30 +808,30 @@ for index, row in Final_df_Swaptions.iterrows():
     
 
 
-# In[68]:
+# In[77]:
 
 #PV01 tolerance for Swaps and VegaTolerance for Swaptions
 
 
-# In[69]:
+# In[78]:
 
 # create pv01 tolerance for the swaps
 Final_df_Swap['PV01_Tolerance']="NaN" # create column
 
 
-# In[70]:
+# In[79]:
 
 # fill in Pv01 Tolerance
 Final_df_Swap['PV01_Tolerance'] = Final_df_Swap['AllTrade_MarkitCTD_Diff'] / abs(Final_df_Swap["NetPV01"]) 
 
 
-# In[71]:
+# In[80]:
 
 # create PV01 exceptions column
 Final_df_Swap['PV01_Exceptions']="NaN" # create column
 
 
-# In[72]:
+# In[81]:
 
 # fill in PV01 Exceptions
 for index, row in Final_df_Swap.iterrows():
@@ -749,119 +841,116 @@ for index, row in Final_df_Swap.iterrows():
         Final_df_Swap.iloc[index, 13]=0
 
 
-# In[73]:
+# In[82]:
 
 # add % of notional column
 Final_df_Swap['%Notional']="NaN" # create column
 
 
-# In[74]:
+# In[83]:
 
 # fill in % of notional column
 Final_df_Swap['%Notional'] = Final_df_Swap["AllTrade_MarkitCTD_Diff"] / Final_df_Swap["NOTIONAL"]
 
 
-# In[75]:
+# In[84]:
 
 # add Exceptions column
 Final_df_Swap['Exceptions']="NaN" # create column
 
 
-# In[76]:
+# In[85]:
 
 # fill in Exceptions
 for index, row in Final_df_Swap.iterrows():
     if int(Final_df_Swap.iloc[index, 11])>=2 and int(Final_df_Swap.iloc[index, 13])>0:
-        Final_df_Swap.iloc[index, 15]=1
+        Final_df_Swap.iloc[index, 15]="CHECK"
     else:
-        Final_df_Swap.iloc[index, 15]=0
+        Final_df_Swap.iloc[index, 15]="OK"
 
 
-# In[77]:
+# In[86]:
 
 Final_df_Swap.Exceptions.value_counts()
 
 
-# In[78]:
-
-# add % of Notional column for Swaptions
-Final_df_Swaptions['%Notional']="NaN" # create column
-
-
-# In[79]:
+# In[87]:
 
 # add Vega exception column for Swaptions
 Final_df_Swaptions['Vega_Exceptions']="NaN" # create column
 
 
-# In[80]:
-
-# fill in % of notional column
-Final_df_Swaptions['%Notional'] = Final_df_Swaptions["AllTrade_MarkitCTD_Diff"] / Final_df_Swaptions["NOTIONAL"]
-
-
-# In[81]:
+# In[88]:
 
 # fill in Vega_Exceptions column
 for index, row in Final_df_Swaptions.iterrows():
     if Final_df_Swaptions.iloc[index, 10]>(3*Final_df_Swaptions.iloc[index, 9]):
-        Final_df_Swaptions.iloc[index, 13]=1
+        Final_df_Swaptions.iloc[index, 12]=1
     else:
-        Final_df_Swaptions.iloc[index, 13]=0
+        Final_df_Swaptions.iloc[index, 12]=0
 
 
-# In[82]:
+# In[89]:
 
 # add  exception column for Swaptions
 Final_df_Swaptions['Exceptions']="NaN" # create column
 
 
-# In[83]:
+# In[90]:
 
 # fill in Exceptions for Swaptions
 for index, row in Final_df_Swaptions.iterrows():
-    if int(Final_df_Swaptions.iloc[index, 11])>=2 and int(Final_df_Swaptions.iloc[index, 13])>0:
-        Final_df_Swaptions.iloc[index, 14]=1
+    if int(Final_df_Swaptions.iloc[index, 11])>=2 and int(Final_df_Swaptions.iloc[index, 12])>0:
+        Final_df_Swaptions.iloc[index, 13]="CHECK"
     else:
-        Final_df_Swaptions.iloc[index, 14]=0
+        Final_df_Swaptions.iloc[index, 13]="OK"
 
 
 # ## Export the outputs
 
-# In[84]:
+# In[91]:
+
+# renaming valuation columns to make the currency clear
+Final_df_Swaptions= Final_df_Swaptions.rename(index=str, columns={"Valuation_AllTrade":"Valuation_AllTrade(GBP)"})
+Final_df_Swap= Final_df_Swap.rename(index=str, columns={"Valuation_AllTrade":"Valuation_AllTrade(GBP)"})
+Final_df_Swaptions= Final_df_Swaptions.rename(index=str, columns={"PresentValue":"PresentValue(GBP)"})
+Final_df_Swap= Final_df_Swap.rename(index=str, columns={"PresentValue":"PresentValue(GBP)"})
+
+
+# In[92]:
 
 Final_df_Swaptions.head()
 
 
-# In[85]:
+# In[93]:
 
 Final_df_Swap.head()
 
 
-# In[86]:
+# In[94]:
 
 # file names
 file_nameSwaps="\Breaks All Trade Swaps "+lastBusDay+".csv"
 file_nameSwaptions="\Breaks All Trade Swaptions "+lastBusDay+".csv"
 
 
-# In[87]:
+# In[95]:
 
 Final_df_Swap.Exceptions.value_counts() # Frequency table of Exceptions
 
 
-# In[88]:
+# In[96]:
 
 Final_df_Swaptions.Exceptions.value_counts() # Frequency table of Exceptions
 
 
-# In[89]:
+# In[97]:
 
 path_Output="//Inv/lgim/FO Operations/Derivative Trade Support/Pricing/Tolerance Breaks Outputs"
 path_Output_Archive="//Inv/lgim/FO Operations/Derivative Trade Support/Pricing/Tolerance Breaks Outputs/Archive"
 
 
-# In[90]:
+# In[98]:
 
 # write to csv
 Final_df_Swap.to_csv(path_Output+file_nameSwaps,header=True,index=False) # write once in the general folder for messing about
@@ -869,9 +958,3 @@ Final_df_Swaptions.to_csv(path_Output+file_nameSwaptions,header=True,index=False
 Final_df_Swap.to_csv(path_Output_Archive+file_nameSwaps,header=True,index=False) # write second time in the Archive
 Final_df_Swaptions.to_csv(path_Output_Archive+file_nameSwaptions,header=True,index=False) # write second time in the Archive
 
-
-# ##### Please note:
-# - removes non shared trades
-# - duplicates in All trade are selected based on fund (if fund matches in Markit)
-# - removes All trade file  sedols with no valuation
-# - It uses markits PresentValue which is in GBP and converts the all trade counterparty MTM to GBP
